@@ -1,0 +1,90 @@
+name: Release Questbook
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Questbook release version (example: 2.8.0)"
+        required: true
+        type: string
+
+      ref:
+        description: "Branch, tag, or commit to package"
+        required: true
+        default: "master"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout selected version
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Verify questbook exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d config/betterquesting
+
+      - name: Package questbook
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          SAFE_VERSION="$(printf '%s' "$VERSION" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          ZIP_NAME="GTNH-Questbook-${SAFE_VERSION}.zip"
+
+          mkdir -p release/config
+          cp -a config/betterquesting release/config/
+
+          (
+            cd release
+            zip -rq "../${ZIP_NAME}" config/betterquesting
+          )
+
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "safe_version=${SAFE_VERSION}" >> "$GITHUB_OUTPUT"
+
+          echo "Contents of ${ZIP_NAME}:"
+          unzip -l "${ZIP_NAME}"
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          SAFE_VERSION: ${{ steps.package.outputs.safe_version }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+        run: |
+          set -euo pipefail
+
+          TAG="questbook-${SAFE_VERSION}"
+          TARGET_SHA="$(git rev-parse HEAD)"
+
+          cat > release-notes.md <<'EOF'
+          Questbook-only release.
+
+          ## Installation
+
+          1. Close GTNH.
+          2. Delete your existing `config/betterquesting` folder.
+          3. Extract the attached `GTNH-Questbook-*.zip` into the root of your GTNH instance.
+          4. Start the game.
+
+          **Download the attached `GTNH-Questbook-*.zip` file, not GitHub's automatically generated "Source code" archives.**
+          EOF
+
+          gh release create "$TAG" "$ZIP_NAME" \
+            --target "$TARGET_SHA" \
+            --title "GTNH Questbook ${VERSION}" \
+            --notes-file release-notes.md
